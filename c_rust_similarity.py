@@ -180,6 +180,46 @@ class CRustSimilarity:
 
         idx = obj.get("idx")
         c_path = obj.get("c_path")
+        return self._build_pairs(c_map, rust_map, idx=idx, c_path=c_path)
+
+    def parse_prompt_completion(self, prompt: str, completion: str) -> List[CodePair]:
+        """Parse prompt/completion strings into C/Rust code pairs."""
+        if not prompt or not completion:
+            raise ValueError("missing prompt or completion")
+        c_map = self._parse_c_files(prompt)
+        rust_map = self._parse_completion_rust(completion)
+        assert c_map, "no C files parsed"
+        assert rust_map, "no Rust files parsed"
+        return self._build_pairs(c_map, rust_map, idx=None, c_path=None)
+
+    def _parse_c_files(self, prompt: str) -> Dict[str, str]:
+        """Extract C code blocks from the prompt section."""
+        section = _extract_section(prompt, "The C Source Files", "The Rust Interface Files")
+        if not section:
+            raise ValueError("C section not found in prompt")
+        files = {name: code.strip() for name, code in C_BLOCK_RE.findall(section)}
+        if not files:
+            raise ValueError("no C files found in prompt")
+        return files
+
+    def _parse_completion_rust(self, completion: str) -> Dict[str, str]:
+        """Extract Rust code blocks from the completion final_solution section."""
+        final_block = _last_final_solution_block(completion)
+        if not final_block:
+            raise ValueError("final_solution block not found in completion")
+        files = {name: code.strip() for name, code in RUST_BLOCK_RE.findall(final_block)}
+        if not files:
+            raise ValueError("no Rust files found in final_solution block")
+        return files
+
+    def _build_pairs(
+        self,
+        c_map: Dict[str, str],
+        rust_map: Dict[str, str],
+        idx: Optional[int],
+        c_path: Optional[str],
+    ) -> List[CodePair]:
+        """Build matched C/Rust pairs from parsed file maps."""
         pairs: List[CodePair] = []
         for rust_file, rust_code in rust_map.items():
             base = os.path.splitext(rust_file)[0]
@@ -210,26 +250,6 @@ class CRustSimilarity:
             )
         return pairs
 
-    def _parse_c_files(self, prompt: str) -> Dict[str, str]:
-        """Extract C code blocks from the prompt section."""
-        section = _extract_section(prompt, "The C Source Files", "The Rust Interface Files")
-        if not section:
-            raise ValueError("C section not found in prompt")
-        files = {name: code.strip() for name, code in C_BLOCK_RE.findall(section)}
-        if not files:
-            raise ValueError("no C files found in prompt")
-        return files
-
-    def _parse_completion_rust(self, completion: str) -> Dict[str, str]:
-        """Extract Rust code blocks from the completion final_solution section."""
-        final_block = _last_final_solution_block(completion)
-        if not final_block:
-            raise ValueError("final_solution block not found in completion")
-        files = {name: code.strip() for name, code in RUST_BLOCK_RE.findall(final_block)}
-        if not files:
-            raise ValueError("no Rust files found in final_solution block")
-        return files
-
     def _cosine_similarity(self, c_embeds, r_embeds) -> List[float]:
         """Compute cosine similarity for aligned embedding rows."""
         torch = self.embedder.torch
@@ -241,6 +261,20 @@ class CRustSimilarity:
         """Map cosine similarity from [-1, 1] to [0, 1]."""
         sim = max(-1.0, min(1.0, sim))
         return (sim + 1.0) / 2.0
+
+    def score_prompt_completion(self, prompt: str, completion: str) -> List[Dict[str, object]]:
+        """Score a single prompt/completion and return per-pair similarity results."""
+        pairs = self.parse_prompt_completion(prompt, completion)
+        return self._score_pairs(pairs)
+
+    def score_texts(self, c_code: str, rust_code: str) -> Dict[str, float]:
+        """Score a single C/Rust code pair without parsing blocks."""
+        if not c_code or not rust_code:
+            raise ValueError("missing c_code or rust_code")
+        c_embeds = self.embedder.encode([c_code])
+        r_embeds = self.embedder.encode([rust_code])
+        sim = float(self._cosine_similarity(c_embeds, r_embeds)[0])
+        return {"cosine_similarity": sim, "similarity_0_1": self._normalize_similarity(sim)}
 
     def process_file(
         self,
@@ -315,6 +349,28 @@ class CRustSimilarity:
             out.write("\n")
             stats.update(sim)
         return len(pairs)
+
+    def _score_pairs(self, pairs: List[CodePair]) -> List[Dict[str, object]]:
+        """Score pairs in-memory and return minimal results."""
+        if not pairs:
+            return []
+        c_texts = [p.c_code for p in pairs]
+        r_texts = [p.rust_code for p in pairs]
+        c_embeds = self.embedder.encode(c_texts)
+        r_embeds = self.embedder.encode(r_texts)
+        sims = self._cosine_similarity(c_embeds, r_embeds)
+        results = []
+        for pair, sim in zip(pairs, sims):
+            sim = float(sim)
+            results.append(
+                {
+                    "rust_file": pair.rust_file,
+                    "c_files": pair.c_files,
+                    "cosine_similarity": sim,
+                    "similarity_0_1": self._normalize_similarity(sim),
+                }
+            )
+        return results
 
 
 def main() -> int:

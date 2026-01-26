@@ -43,6 +43,25 @@ Each line contains:
 }
 ```
 
+### Quick API
+Score a single prompt/completion and return one result per Rust file:
+```python
+from c_rust_similarity import CRustSimilarity
+
+pipe = CRustSimilarity(model_path="../Qwen3-Embedding-0.6B", device="cuda")
+results = pipe.score_prompt_completion(prompt, completion)
+print(results)
+```
+
+Score a direct C/Rust code pair:
+```python
+from c_rust_similarity import CRustSimilarity
+
+pipe = CRustSimilarity(model_path="../Qwen3-Embedding-0.6B", device="cuda")
+result = pipe.score_texts(c_code, rust_code)
+print(result)
+```
+
 ### Running
 Example run (GPU, full file, from repo root):
 ```bash
@@ -103,6 +122,25 @@ Optional flags:
   "cosine_similarity": <float>,
   "similarity_0_1": <float>
 }
+```
+
+### 快捷 API
+对单个 prompt/completion 评分（每个 Rust 文件一个结果）：
+```python
+from c_rust_similarity import CRustSimilarity
+
+pipe = CRustSimilarity(model_path="../Qwen3-Embedding-0.6B", device="cuda")
+results = pipe.score_prompt_completion(prompt, completion)
+print(results)
+```
+
+直接对 C/Rust 代码文本评分：
+```python
+from c_rust_similarity import CRustSimilarity
+
+pipe = CRustSimilarity(model_path="../Qwen3-Embedding-0.6B", device="cuda")
+result = pipe.score_texts(c_code, rust_code)
+print(result)
 ```
 
 ### 运行方式

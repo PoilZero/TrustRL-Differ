@@ -80,6 +80,21 @@ class CRustSimilarityTests(unittest.TestCase):
             self.assertAlmostEqual(rec["cosine_similarity"], 1.0, places=6)
             self.assertAlmostEqual(rec["similarity_0_1"], 1.0, places=6)
 
+    def test_score_prompt_completion(self):
+        pipeline = CRustSimilarity(embedder=DummyEmbedder())
+        obj = json.loads(_sample_jsonl_line())
+        results = pipeline.score_prompt_completion(obj["prompt"], obj["completion"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["rust_file"], "foo.rs")
+        self.assertAlmostEqual(results[0]["cosine_similarity"], 1.0, places=6)
+        self.assertAlmostEqual(results[0]["similarity_0_1"], 1.0, places=6)
+
+    def test_score_texts(self):
+        pipeline = CRustSimilarity(embedder=DummyEmbedder())
+        result = pipeline.score_texts("int foo(void) { return 1; }", "pub fn foo() -> i32 { 1 }")
+        self.assertAlmostEqual(result["cosine_similarity"], 1.0, places=6)
+        self.assertAlmostEqual(result["similarity_0_1"], 1.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()
