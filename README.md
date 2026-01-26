@@ -9,6 +9,7 @@ This project parses `train_outputs_0.jsonl`, pairs C source code with Rust outpu
 - `c_rust_similarity.py`: main pipeline (parsing, pairing, embedding, similarity, output).
 - `test_c_rust_similarity.py`: minimal tests with a dummy embedder.
 - `api_server.py`: HTTP service with batching and high-concurrency support.
+- `scripts/`: API test scripts.
 - `utils/`: helper scripts.
 - `../Qwen3-Embedding-0.6B/`: local embedding model files (outside repo).
 - `../c_rust_sample/`: example input/output location used for full runs and reports.
@@ -74,7 +75,7 @@ Start the service (from repo root):
 python api_server.py \
   --model-path ../Qwen3-Embedding-0.6B \
   --host 0.0.0.0 \
-  --port 8000 \
+  --port 7010 \
   --max-batch-size 8 \
   --max-wait-ms 30 \
   --max-queue-size 1024
@@ -82,16 +83,33 @@ python api_server.py \
 
 Single request:
 ```bash
-curl -X POST http://localhost:8000/score_prompt_completion \\
+curl -X POST http://localhost:7010/score_prompt_completion \\
   -H 'Content-Type: application/json' \\
   -d '{"prompt":"...","completion":"..."}'
 ```
 
 Batch request:
 ```bash
-curl -X POST http://localhost:8000/score_texts_batch \\
+curl -X POST http://localhost:7010/score_texts_batch \\
   -H 'Content-Type: application/json' \\
   -d '{"items":[{"c_code":"...","rust_code":"..."}]}'
+```
+
+### Client/Server Design
+- The server loads the embedding model once and exposes HTTP endpoints.
+- Requests are queued and dynamically batched, then scored on GPU in a background loop.
+- Clients can be lightweight (scripts or other services) and only send inputs/receive scores.
+- Batch endpoints reduce per-request overhead; the queue avoids blocking under concurrency.
+
+### Test Scripts
+- `scripts/test_api.sh`: run all single and batch endpoints.
+- `scripts/test_api_concurrent.sh`: concurrent `/score_texts` check.
+- Default base URL: `http://127.0.0.1:7010` (override with `BASE_URL`).
+
+Example:
+```bash
+BASE_URL=http://127.0.0.1:7010 scripts/test_api.sh
+BASE_URL=http://127.0.0.1:7010 scripts/test_api_concurrent.sh
 ```
 
 ### Running
@@ -122,6 +140,7 @@ Optional flags:
 - `c_rust_similarity.py`：主流程（解析、配对、embedding、相似度、输出）。
 - `test_c_rust_similarity.py`：最小化测试（使用 Dummy embedder）。
 - `api_server.py`：HTTP 服务（批处理与高并发支持）。
+- `scripts/`：API 测试脚本。
 - `utils/`：辅助脚本。
 - `../Qwen3-Embedding-0.6B/`：本地模型文件（仓库外）。
 - `../c_rust_sample/`：示例输入/输出目录。
@@ -187,7 +206,7 @@ pip install fastapi uvicorn
 python api_server.py \
   --model-path ../Qwen3-Embedding-0.6B \
   --host 0.0.0.0 \
-  --port 8000 \
+  --port 7010 \
   --max-batch-size 8 \
   --max-wait-ms 30 \
   --max-queue-size 1024
@@ -195,16 +214,33 @@ python api_server.py \
 
 单条请求：
 ```bash
-curl -X POST http://localhost:8000/score_prompt_completion \\
+curl -X POST http://localhost:7010/score_prompt_completion \\
   -H 'Content-Type: application/json' \\
   -d '{"prompt":"...","completion":"..."}'
 ```
 
 批量请求：
 ```bash
-curl -X POST http://localhost:8000/score_texts_batch \\
+curl -X POST http://localhost:7010/score_texts_batch \\
   -H 'Content-Type: application/json' \\
   -d '{"items":[{"c_code":"...","rust_code":"..."}]}'
+```
+
+### C/S 分离设计
+- 服务端一次加载模型并提供 HTTP 接口。
+- 请求进入队列后进行动态批处理，后台循环在 GPU 上计算。
+- 客户端可以很轻量（脚本或其他服务），只需传入文本并获取结果。
+- 批量接口减少请求开销，队列机制避免高并发时阻塞。
+
+### 测试脚本
+- `scripts/test_api.sh`：跑完整单条与批量接口。
+- `scripts/test_api_concurrent.sh`：并发调用 `/score_texts`。
+- 默认地址：`http://127.0.0.1:7010`（可用 `BASE_URL` 覆盖）。
+
+示例：
+```bash
+BASE_URL=http://127.0.0.1:7010 scripts/test_api.sh
+BASE_URL=http://127.0.0.1:7010 scripts/test_api_concurrent.sh
 ```
 
 ### 运行方式
