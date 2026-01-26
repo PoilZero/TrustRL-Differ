@@ -10,7 +10,11 @@ from typing import Dict, Iterable, List, Optional
 
 
 C_BLOCK_RE = re.compile(r"\{\{([^}]+\.(?:c|h))\}\}\s*```c\n(.*?)```", re.S)
-RUST_BLOCK_RE = re.compile(r"\{\{([^}]+\.rs)\}\}\s*```rust\n(.*?)```", re.S)
+RUST_BLOCK_RE = re.compile(r"\{\{([a-zA-Z0-9_\-\.]+\.rs)\}\}\s*```rust\s*\n(.*?)```", re.S)
+RUST_LAST_BLOCK_RE = re.compile(
+    r"\{\{([a-zA-Z0-9_\-\.]+\.rs)\}\}\s*```rust\s*\n((?:(?!```).)*?)$",
+    re.S,
+)
 
 
 def _extract_section(text: str, start_marker: str, end_marker: Optional[str]) -> str:
@@ -29,14 +33,8 @@ def _extract_section(text: str, start_marker: str, end_marker: Optional[str]) ->
 
 
 def _last_final_solution_block(text: str) -> str:
-    """Return the last <final_solution> block to avoid template text collisions."""
-    end = text.rfind("</final_solution>")
-    if end == -1:
-        return ""
-    start = text.rfind("<final_solution>", 0, end)
-    if start == -1:
-        return ""
-    return text[start + len("<final_solution>") : end]
+    """Return the last <final_solution> split segment (PZ04-compatible)."""
+    return text.split("<final_solution>")[-1]
 
 
 def _last_token_pool(last_hidden_states, attention_mask):
@@ -205,9 +203,14 @@ class CRustSimilarity:
     def _parse_completion_rust(self, completion: str) -> Dict[str, str]:
         """Extract Rust code blocks from the completion final_solution section."""
         final_block = _last_final_solution_block(completion)
-        if not final_block:
-            raise ValueError("final_solution block not found in completion")
         files = {name: code.strip() for name, code in RUST_BLOCK_RE.findall(final_block)}
+
+        last_match = RUST_LAST_BLOCK_RE.search(final_block)
+        if last_match:
+            name, code = last_match.groups()
+            if name not in files:
+                files[name] = code.strip()
+
         if not files:
             raise ValueError("no Rust files found in final_solution block")
         return files
