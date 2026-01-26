@@ -1,0 +1,19 @@
+# Model and dataset artifacts
+Qwen3-Embedding-0.6B/
+datasets/
+
+# Large source JSONL input
+c_rust_sample/train_outputs_0.jsonl
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Local virtual envs
+.venv/
+
+# Stale nested dir (migrated content)
+TrustRL-Differ/
