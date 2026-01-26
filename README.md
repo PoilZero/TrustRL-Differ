@@ -8,6 +8,7 @@ This project parses `train_outputs_0.jsonl`, pairs C source code with Rust outpu
 ### Structure
 - `c_rust_similarity.py`: main pipeline (parsing, pairing, embedding, similarity, output).
 - `test_c_rust_similarity.py`: minimal tests with a dummy embedder.
+- `api_server.py`: HTTP service with batching and high-concurrency support.
 - `utils/`: helper scripts.
 - `../Qwen3-Embedding-0.6B/`: local embedding model files (outside repo).
 - `../c_rust_sample/`: example input/output location used for full runs and reports.
@@ -62,6 +63,37 @@ result = pipe.score_texts(c_code, rust_code)
 print(result)
 ```
 
+### HTTP Service
+Install dependencies:
+```bash
+pip install fastapi uvicorn
+```
+
+Start the service (from repo root):
+```bash
+python api_server.py \
+  --model-path ../Qwen3-Embedding-0.6B \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --max-batch-size 8 \
+  --max-wait-ms 30 \
+  --max-queue-size 1024
+```
+
+Single request:
+```bash
+curl -X POST http://localhost:8000/score_prompt_completion \\
+  -H 'Content-Type: application/json' \\
+  -d '{"prompt":"...","completion":"..."}'
+```
+
+Batch request:
+```bash
+curl -X POST http://localhost:8000/score_texts_batch \\
+  -H 'Content-Type: application/json' \\
+  -d '{"items":[{"c_code":"...","rust_code":"..."}]}'
+```
+
 ### Running
 Example run (GPU, full file, from repo root):
 ```bash
@@ -89,6 +121,7 @@ Optional flags:
 ### 目录结构
 - `c_rust_similarity.py`：主流程（解析、配对、embedding、相似度、输出）。
 - `test_c_rust_similarity.py`：最小化测试（使用 Dummy embedder）。
+- `api_server.py`：HTTP 服务（批处理与高并发支持）。
 - `utils/`：辅助脚本。
 - `../Qwen3-Embedding-0.6B/`：本地模型文件（仓库外）。
 - `../c_rust_sample/`：示例输入/输出目录。
@@ -141,6 +174,37 @@ from c_rust_similarity import CRustSimilarity
 pipe = CRustSimilarity(model_path="../Qwen3-Embedding-0.6B", device="cuda")
 result = pipe.score_texts(c_code, rust_code)
 print(result)
+```
+
+### HTTP 服务
+安装依赖：
+```bash
+pip install fastapi uvicorn
+```
+
+启动服务（在仓库根目录执行）：
+```bash
+python api_server.py \
+  --model-path ../Qwen3-Embedding-0.6B \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --max-batch-size 8 \
+  --max-wait-ms 30 \
+  --max-queue-size 1024
+```
+
+单条请求：
+```bash
+curl -X POST http://localhost:8000/score_prompt_completion \\
+  -H 'Content-Type: application/json' \\
+  -d '{"prompt":"...","completion":"..."}'
+```
+
+批量请求：
+```bash
+curl -X POST http://localhost:8000/score_texts_batch \\
+  -H 'Content-Type: application/json' \\
+  -d '{"items":[{"c_code":"...","rust_code":"..."}]}'
 ```
 
 ### 运行方式
