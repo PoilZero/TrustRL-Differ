@@ -113,6 +113,7 @@ class CodePair:
     c_files: List[str]
     c_code: str
     rust_code: str
+    rust_sig_code: Optional[str]
 
 
 @dataclass
@@ -144,6 +145,28 @@ class SimilarityStats:
         }
 
 
+@dataclass
+class SimilarityBundle:
+    """Grouped statistics for code, signature, and delta similarities."""
+    code: SimilarityStats = field(default_factory=SimilarityStats)
+    sig: SimilarityStats = field(default_factory=SimilarityStats)
+    delta: SimilarityStats = field(default_factory=SimilarityStats)
+
+    def update(self, code: float, sig: float, delta: float) -> None:
+        """Update all sub-stats at once."""
+        self.code.update(code)
+        self.sig.update(sig)
+        self.delta.update(delta)
+
+    def to_dict(self) -> Dict[str, Dict[str, float]]:
+        """Return stats for each cosine field."""
+        return {
+            "cosine_similarity_code": self.code.to_dict(),
+            "cosine_similarity_sig": self.sig.to_dict(),
+            "cosine_similarity(code-sig)": self.delta.to_dict(),
+        }
+
+
 class CRustSimilarity:
     """Parse JSONL inputs, build C/Rust pairs, embed, and write similarity results."""
     def __init__(
@@ -172,23 +195,25 @@ class CRustSimilarity:
             raise ValueError("missing prompt or completion")
 
         c_map = self._parse_c_files(prompt)
+        rust_sig_map = self._parse_rust_sig_files(prompt)
         rust_map = self._parse_completion_rust(completion)
         assert c_map, "no C files parsed"
         assert rust_map, "no Rust files parsed"
 
         idx = obj.get("idx")
         c_path = obj.get("c_path")
-        return self._build_pairs(c_map, rust_map, idx=idx, c_path=c_path)
+        return self._build_pairs(c_map, rust_map, rust_sig_map, idx=idx, c_path=c_path)
 
     def parse_prompt_completion(self, prompt: str, completion: str) -> List[CodePair]:
         """Parse prompt/completion strings into C/Rust code pairs."""
         if not prompt or not completion:
             raise ValueError("missing prompt or completion")
         c_map = self._parse_c_files(prompt)
+        rust_sig_map = self._parse_rust_sig_files(prompt)
         rust_map = self._parse_completion_rust(completion)
         assert c_map, "no C files parsed"
         assert rust_map, "no Rust files parsed"
-        return self._build_pairs(c_map, rust_map, idx=None, c_path=None)
+        return self._build_pairs(c_map, rust_map, rust_sig_map, idx=None, c_path=None)
 
     def _parse_c_files(self, prompt: str) -> Dict[str, str]:
         """Extract C code blocks from the prompt section."""
@@ -199,6 +224,14 @@ class CRustSimilarity:
         if not files:
             raise ValueError("no C files found in prompt")
         return files
+
+    def _parse_rust_sig_files(self, prompt: str) -> Dict[str, str]:
+        """Extract Rust signature blocks from the prompt section."""
+        section = _extract_section(prompt, "The Rust Interface Files", None)
+        if not section:
+            return {}
+        files = {name: code.strip() for name, code in RUST_BLOCK_RE.findall(section)}
+        return {name: code for name, code in files.items() if code}
 
     def _parse_completion_rust(self, completion: str) -> Dict[str, str]:
         """Extract Rust code blocks from the completion final_solution section."""
@@ -219,6 +252,7 @@ class CRustSimilarity:
         self,
         c_map: Dict[str, str],
         rust_map: Dict[str, str],
+        rust_sig_map: Dict[str, str],
         idx: Optional[int],
         c_path: Optional[str],
     ) -> List[CodePair]:
@@ -241,6 +275,11 @@ class CRustSimilarity:
             merged = "\n\n".join(parts).strip()
             if not merged:
                 raise ValueError(f"empty merged C for rust base {base}")
+            rust_sig_code = rust_sig_map.get(rust_file)
+            if rust_sig_code:
+                rust_sig_code = rust_sig_code.strip()
+                if not rust_sig_code:
+                    rust_sig_code = None
             pairs.append(
                 CodePair(
                     idx=idx,
@@ -249,6 +288,7 @@ class CRustSimilarity:
                     c_files=c_files,
                     c_code=merged,
                     rust_code=rust_code.strip(),
+                    rust_sig_code=rust_sig_code,
                 )
             )
         return pairs
@@ -260,24 +300,60 @@ class CRustSimilarity:
         sims = torch.sum(c_embeds * r_embeds, dim=1)
         return sims.tolist()
 
-    def _normalize_similarity(self, sim: float) -> float:
-        """Map cosine similarity from [-1, 1] to [0, 1]."""
-        sim = max(-1.0, min(1.0, sim))
-        return (sim + 1.0) / 2.0
+    def _compute_scores(self, pairs: List[CodePair]) -> List[tuple[float, float, float]]:
+        """Compute code/sig/delta cosine scores with missing/negative handling."""
+        if not pairs:
+            return []
+        results: List[tuple[float, float, float]] = [(0.0, 0.0, 0.0)] * len(pairs)
+        idxs = [i for i, pair in enumerate(pairs) if pair.rust_sig_code]
+        if not idxs:
+            return results
+
+        c_texts = [pairs[i].c_code for i in idxs]
+        r_texts = [pairs[i].rust_code for i in idxs]
+        sig_texts = [pairs[i].rust_sig_code or "" for i in idxs]
+        c_embeds = self.embedder.encode(c_texts)
+        r_embeds = self.embedder.encode(r_texts)
+        sig_embeds = self.embedder.encode(sig_texts)
+        code_sims = self._cosine_similarity(c_embeds, r_embeds)
+        sig_sims = self._cosine_similarity(c_embeds, sig_embeds)
+
+        for idx, code_sim, sig_sim in zip(idxs, code_sims, sig_sims):
+            code_sim = float(code_sim)
+            sig_sim = float(sig_sim)
+            delta = code_sim - sig_sim
+            if delta < 0:
+                results[idx] = (0.0, 0.0, 0.0)
+            else:
+                results[idx] = (code_sim, sig_sim, delta)
+        return results
 
     def score_prompt_completion(self, prompt: str, completion: str) -> List[Dict[str, object]]:
         """Score a single prompt/completion and return per-pair similarity results."""
         pairs = self.parse_prompt_completion(prompt, completion)
         return self._score_pairs(pairs)
 
-    def score_texts(self, c_code: str, rust_code: str) -> Dict[str, float]:
-        """Score a single C/Rust code pair without parsing blocks."""
+    def score_texts(
+        self, c_code: str, rust_code: str, rust_sig_code: Optional[str] = None
+    ) -> Dict[str, float]:
+        """Score a single C/Rust pair with optional Rust signature code."""
         if not c_code or not rust_code:
             raise ValueError("missing c_code or rust_code")
-        c_embeds = self.embedder.encode([c_code])
-        r_embeds = self.embedder.encode([rust_code])
-        sim = float(self._cosine_similarity(c_embeds, r_embeds)[0])
-        return {"cosine_similarity": sim, "similarity_0_1": self._normalize_similarity(sim)}
+        pair = CodePair(
+            idx=None,
+            c_path=None,
+            rust_file="inline.rs",
+            c_files=[],
+            c_code=c_code,
+            rust_code=rust_code,
+            rust_sig_code=rust_sig_code.strip() if rust_sig_code else None,
+        )
+        code_sim, sig_sim, delta = self._compute_scores([pair])[0]
+        return {
+            "cosine_similarity_code": code_sim,
+            "cosine_similarity_sig": sig_sim,
+            "cosine_similarity(code-sig)": delta,
+        }
 
     def process_file(
         self,
@@ -288,7 +364,7 @@ class CRustSimilarity:
         error_cap: int = 20,
     ) -> Dict[str, object]:
         """Process an input JSONL file and write similarity JSONL output."""
-        stats = SimilarityStats()
+        stats = SimilarityBundle()
         errors = []
         pairs_written = 0
         lines_processed = 0
@@ -323,21 +399,15 @@ class CRustSimilarity:
             "lines_processed": lines_processed,
             "pairs_written": pairs_written,
             "errors": errors,
-            "similarity": stats.to_dict(),
+                "similarity": stats.to_dict(),
         }
 
-    def _write_pairs(self, pairs: List[CodePair], out, stats: SimilarityStats) -> int:
+    def _write_pairs(self, pairs: List[CodePair], out, stats: SimilarityBundle) -> int:
         """Embed and write a batch of pairs, updating stats."""
         if not pairs:
             return 0
-        c_texts = [p.c_code for p in pairs]
-        r_texts = [p.rust_code for p in pairs]
-        c_embeds = self.embedder.encode(c_texts)
-        r_embeds = self.embedder.encode(r_texts)
-        sims = self._cosine_similarity(c_embeds, r_embeds)
-        for pair, sim in zip(pairs, sims):
-            sim = float(sim)
-            sim_norm = self._normalize_similarity(sim)
+        scores = self._compute_scores(pairs)
+        for pair, (code_sim, sig_sim, delta) in zip(pairs, scores):
             record = {
                 "idx": pair.idx,
                 "c_path": pair.c_path,
@@ -345,32 +415,29 @@ class CRustSimilarity:
                 "c_files": pair.c_files,
                 "c_code": pair.c_code,
                 "rust_code": pair.rust_code,
-                "cosine_similarity": sim,
-                "similarity_0_1": sim_norm,
+                "cosine_similarity_code": code_sim,
+                "cosine_similarity_sig": sig_sim,
+                "cosine_similarity(code-sig)": delta,
             }
             json.dump(record, out, ensure_ascii=True)
             out.write("\n")
-            stats.update(sim)
+            stats.update(code_sim, sig_sim, delta)
         return len(pairs)
 
     def _score_pairs(self, pairs: List[CodePair]) -> List[Dict[str, object]]:
         """Score pairs in-memory and return minimal results."""
         if not pairs:
             return []
-        c_texts = [p.c_code for p in pairs]
-        r_texts = [p.rust_code for p in pairs]
-        c_embeds = self.embedder.encode(c_texts)
-        r_embeds = self.embedder.encode(r_texts)
-        sims = self._cosine_similarity(c_embeds, r_embeds)
+        scores = self._compute_scores(pairs)
         results = []
-        for pair, sim in zip(pairs, sims):
-            sim = float(sim)
+        for pair, (code_sim, sig_sim, delta) in zip(pairs, scores):
             results.append(
                 {
                     "rust_file": pair.rust_file,
                     "c_files": pair.c_files,
-                    "cosine_similarity": sim,
-                    "similarity_0_1": self._normalize_similarity(sim),
+                    "cosine_similarity_code": code_sim,
+                    "cosine_similarity_sig": sig_sim,
+                    "cosine_similarity(code-sig)": delta,
                 }
             )
         return results

@@ -9,7 +9,7 @@ echo "BASE_URL=${BASE_URL}"
 echo "==> score_texts"
 curl -s "${BASE_URL}/score_texts" \
   -H "Content-Type: application/json" \
-  -d '{"c_code":"int foo(void){return 1;}","rust_code":"pub fn foo()->i32{1}"}'
+  -d '{"c_code":"int foo(void){return 1;}","rust_code":"pub fn foo()->i32{1}","rust_sig_code":"pub fn foo()->i32;"}'
 echo
 
 echo "==> score_prompt_completion"
@@ -41,8 +41,16 @@ python - <<'PY' | curl -s "${BASE_URL}/score_texts_batch" -H "Content-Type: appl
 import json
 payload = {
     "items": [
-        {"c_code": "int foo(void){return 1;}", "rust_code": "pub fn foo()->i32{1}"},
-        {"c_code": "int add(int a,int b){return a+b;}", "rust_code": "pub fn add(a:i32,b:i32)->i32{a+b}"},
+        {
+            "c_code": "int foo(void){return 1;}",
+            "rust_code": "pub fn foo()->i32{1}",
+            "rust_sig_code": "pub fn foo()->i32;",
+        },
+        {
+            "c_code": "int add(int a,int b){return a+b;}",
+            "rust_code": "pub fn add(a:i32,b:i32)->i32{a+b}",
+            "rust_sig_code": "pub fn add(a:i32,b:i32)->i32;",
+        },
     ]
 }
 print(json.dumps(payload))

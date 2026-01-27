@@ -19,6 +19,7 @@ class BatchItem:
     completion: Optional[str]
     c_code: Optional[str]
     rust_code: Optional[str]
+    rust_sig_code: Optional[str]
     request_id: Optional[str]
     future: asyncio.Future
 
@@ -36,6 +37,7 @@ class PromptCompletionBatchRequest(BaseModel):
 class TextsRequest(BaseModel):
     c_code: str
     rust_code: str
+    rust_sig_code: Optional[str] = None
     request_id: Optional[str] = None
 
 
@@ -130,19 +132,17 @@ class BatchScoringService:
 
         pc_results: Dict[int, List[Dict[str, Any]]] = {}
         if pc_pairs:
-            c_texts = [p.c_code for p in pc_pairs]
-            r_texts = [p.rust_code for p in pc_pairs]
-            c_embeds = self.model.embedder.encode(c_texts)
-            r_embeds = self.model.embedder.encode(r_texts)
-            sims = self.model._cosine_similarity(c_embeds, r_embeds)
-            for pair, sim, item_idx in zip(pc_pairs, sims, pc_pair_to_item):
-                sim = float(sim)
+            scores = self.model._compute_scores(pc_pairs)
+            for pair, (code_sim, sig_sim, delta), item_idx in zip(
+                pc_pairs, scores, pc_pair_to_item
+            ):
                 pc_results.setdefault(item_idx, []).append(
                     {
                         "rust_file": pair.rust_file,
                         "c_files": pair.c_files,
-                        "cosine_similarity": sim,
-                        "similarity_0_1": self.model._normalize_similarity(sim),
+                        "cosine_similarity_code": code_sim,
+                        "cosine_similarity_sig": sig_sim,
+                        "cosine_similarity(code-sig)": delta,
                     }
                 )
 
@@ -158,7 +158,7 @@ class BatchScoringService:
             }
 
         text_items: List[int] = []
-        text_inputs: List[tuple[str, str]] = []
+        text_pairs: List[CodePair] = []
         for idx, item in enumerate(batch):
             if item.kind != "texts":
                 continue
@@ -170,21 +170,27 @@ class BatchScoringService:
                 }
                 continue
             text_items.append(idx)
-            text_inputs.append((item.c_code, item.rust_code))
+            text_pairs.append(
+                CodePair(
+                    idx=None,
+                    c_path=None,
+                    rust_file="inline.rs",
+                    c_files=[],
+                    c_code=item.c_code,
+                    rust_code=item.rust_code,
+                    rust_sig_code=item.rust_sig_code.strip() if item.rust_sig_code else None,
+                )
+            )
 
-        if text_inputs:
-            c_texts = [c for c, _ in text_inputs]
-            r_texts = [r for _, r in text_inputs]
-            c_embeds = self.model.embedder.encode(c_texts)
-            r_embeds = self.model.embedder.encode(r_texts)
-            sims = self.model._cosine_similarity(c_embeds, r_embeds)
-            for item_idx, sim in zip(text_items, sims):
-                sim = float(sim)
+        if text_pairs:
+            scores = self.model._compute_scores(text_pairs)
+            for item_idx, (code_sim, sig_sim, delta) in zip(text_items, scores):
                 responses[item_idx] = {
                     "request_id": batch[item_idx].request_id,
                     "result": {
-                        "cosine_similarity": sim,
-                        "similarity_0_1": self.model._normalize_similarity(sim),
+                        "cosine_similarity_code": code_sim,
+                        "cosine_similarity_sig": sig_sim,
+                        "cosine_similarity(code-sig)": delta,
                     },
                     "error": None,
                 }
@@ -219,6 +225,7 @@ def create_app(service: BatchScoringService) -> FastAPI:
             completion=req.completion,
             c_code=None,
             rust_code=None,
+            rust_sig_code=None,
             request_id=req.request_id,
             future=loop.create_future(),
         )
@@ -237,6 +244,7 @@ def create_app(service: BatchScoringService) -> FastAPI:
                 completion=item.completion,
                 c_code=None,
                 rust_code=None,
+                rust_sig_code=None,
                 request_id=item.request_id,
                 future=loop.create_future(),
             )
@@ -257,6 +265,7 @@ def create_app(service: BatchScoringService) -> FastAPI:
             completion=None,
             c_code=req.c_code,
             rust_code=req.rust_code,
+            rust_sig_code=req.rust_sig_code,
             request_id=req.request_id,
             future=loop.create_future(),
         )
@@ -275,6 +284,7 @@ def create_app(service: BatchScoringService) -> FastAPI:
                 completion=None,
                 c_code=item.c_code,
                 rust_code=item.rust_code,
+                rust_sig_code=item.rust_sig_code,
                 request_id=item.request_id,
                 future=loop.create_future(),
             )

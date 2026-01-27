@@ -4,7 +4,7 @@
 ## English
 ### Why This
 - Pair C headers/sources with Rust outputs per file and score semantic closeness.
-- GPU embedding with Qwen3-Embedding-0.6B; normalized 0–1 similarity for easy ranking.
+- GPU embedding with Qwen3-Embedding-0.6B; output code/sig/delta cosine scores.
 - Client/server separation: the server loads the model once; requests are queued and dynamically batched for high concurrency.
 
 ### Usage (3 Ways)
@@ -36,7 +36,7 @@ from c_rust_similarity import CRustSimilarity
 
 pipe = CRustSimilarity(model_path="../Qwen3-Embedding-0.6B", device="cuda")
 print(pipe.score_prompt_completion(prompt, completion))
-print(pipe.score_texts(c_code, rust_code))
+print(pipe.score_texts(c_code, rust_code, rust_sig_code))
 ```
 
 #### 3) Direct File Processing
@@ -52,7 +52,7 @@ python c_rust_similarity.py \
 ## 中文
 ### 优点 / 为什么
 - 按文件匹配 C 头文件/源码与 Rust 输出，衡量语义接近度。
-- 使用 Qwen3-Embedding-0.6B 的 GPU 向量，输出 0–1 归一化相似度便于排序。
+- 使用 Qwen3-Embedding-0.6B 的 GPU 向量，输出 code/sig/delta 余弦分数。
 - C/S 分离：服务端一次加载模型，请求入队并动态 batch，支撑高并发。
 
 ### 使用方式（3 种）
@@ -84,7 +84,7 @@ from c_rust_similarity import CRustSimilarity
 
 pipe = CRustSimilarity(model_path="../Qwen3-Embedding-0.6B", device="cuda")
 print(pipe.score_prompt_completion(prompt, completion))
-print(pipe.score_texts(c_code, rust_code))
+print(pipe.score_texts(c_code, rust_code, rust_sig_code))
 ```
 
 #### 3) 直接处理文件

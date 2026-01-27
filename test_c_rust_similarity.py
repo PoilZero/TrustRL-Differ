@@ -65,6 +65,7 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertTrue(pair.c_code.startswith("/* header */"))
         self.assertIn("int foo(void)", pair.c_code)
         self.assertIn("pub fn foo()", pair.rust_code)
+        self.assertIn("pub fn foo()", pair.rust_sig_code or "")
 
     def test_process_file(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -77,8 +78,9 @@ class CRustSimilarityTests(unittest.TestCase):
             self.assertEqual(report["pairs_written"], 1)
             with open(out_path, "r", encoding="utf-8") as f:
                 rec = json.loads(f.readline())
-            self.assertAlmostEqual(rec["cosine_similarity"], 1.0, places=6)
-            self.assertAlmostEqual(rec["similarity_0_1"], 1.0, places=6)
+            self.assertAlmostEqual(rec["cosine_similarity_code"], 1.0, places=6)
+            self.assertAlmostEqual(rec["cosine_similarity_sig"], 1.0, places=6)
+            self.assertAlmostEqual(rec["cosine_similarity(code-sig)"], 0.0, places=6)
 
     def test_score_prompt_completion(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -86,14 +88,27 @@ class CRustSimilarityTests(unittest.TestCase):
         results = pipeline.score_prompt_completion(obj["prompt"], obj["completion"])
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["rust_file"], "foo.rs")
-        self.assertAlmostEqual(results[0]["cosine_similarity"], 1.0, places=6)
-        self.assertAlmostEqual(results[0]["similarity_0_1"], 1.0, places=6)
+        self.assertAlmostEqual(results[0]["cosine_similarity_code"], 1.0, places=6)
+        self.assertAlmostEqual(results[0]["cosine_similarity_sig"], 1.0, places=6)
+        self.assertAlmostEqual(results[0]["cosine_similarity(code-sig)"], 0.0, places=6)
 
     def test_score_texts(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
+        result = pipeline.score_texts(
+            "int foo(void) { return 1; }",
+            "pub fn foo() -> i32 { 1 }",
+            "pub fn foo() -> i32;",
+        )
+        self.assertAlmostEqual(result["cosine_similarity_code"], 1.0, places=6)
+        self.assertAlmostEqual(result["cosine_similarity_sig"], 1.0, places=6)
+        self.assertAlmostEqual(result["cosine_similarity(code-sig)"], 0.0, places=6)
+
+    def test_score_texts_missing_sig(self):
+        pipeline = CRustSimilarity(embedder=DummyEmbedder())
         result = pipeline.score_texts("int foo(void) { return 1; }", "pub fn foo() -> i32 { 1 }")
-        self.assertAlmostEqual(result["cosine_similarity"], 1.0, places=6)
-        self.assertAlmostEqual(result["similarity_0_1"], 1.0, places=6)
+        self.assertAlmostEqual(result["cosine_similarity_code"], 0.0, places=6)
+        self.assertAlmostEqual(result["cosine_similarity_sig"], 0.0, places=6)
+        self.assertAlmostEqual(result["cosine_similarity(code-sig)"], 0.0, places=6)
 
 
 if __name__ == "__main__":
