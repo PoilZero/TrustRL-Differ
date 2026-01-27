@@ -201,33 +201,116 @@ class CRustSimilarity:
         obj = json.loads(line)
         prompt = obj.get("prompt", "")
         completion = obj.get("completion", "")
-        if not prompt or not completion:
-            raise ValueError("missing prompt or completion")
-
-        c_map = self._parse_c_files(prompt)
-        rust_sig_map, sig_error = self._parse_rust_sig_files(prompt)
-        rust_map = self._parse_completion_rust(completion)
-        assert c_map, "no C files parsed"
-        assert rust_map, "no Rust files parsed"
-
         idx = obj.get("idx")
         c_path = obj.get("c_path")
+
+        errors: List[str] = []
+        c_map: Dict[str, str] = {}
+        rust_map: Dict[str, str] = {}
+        rust_sig_map: Dict[str, str] = {}
+        sig_error: Optional[str] = None
+
+        if not prompt or not completion:
+            errors.append("parse_missing_prompt_or_completion")
+        else:
+            try:
+                c_map = self._parse_c_files(prompt)
+            except Exception:
+                errors.append("parse_missing_c")
+            rust_sig_map, sig_error = self._parse_rust_sig_files(prompt)
+            if sig_error:
+                errors.append(sig_error)
+            try:
+                rust_map = self._parse_completion_rust(completion)
+            except Exception:
+                errors.append("parse_missing_rust")
+
+        if errors:
+            return self._build_missing_pair(
+                idx=idx,
+                c_path=c_path,
+                c_map=c_map,
+                rust_map=rust_map,
+                rust_sig_map=rust_sig_map,
+                errors=errors,
+            )
+
         return self._build_pairs(
             c_map, rust_map, rust_sig_map, sig_error, idx=idx, c_path=c_path
         )
 
     def parse_prompt_completion(self, prompt: str, completion: str) -> List[CodePair]:
         """Parse prompt/completion strings into C/Rust code pairs."""
+        errors: List[str] = []
+        c_map: Dict[str, str] = {}
+        rust_map: Dict[str, str] = {}
+        rust_sig_map: Dict[str, str] = {}
+        sig_error: Optional[str] = None
+
         if not prompt or not completion:
-            raise ValueError("missing prompt or completion")
-        c_map = self._parse_c_files(prompt)
-        rust_sig_map, sig_error = self._parse_rust_sig_files(prompt)
-        rust_map = self._parse_completion_rust(completion)
-        assert c_map, "no C files parsed"
-        assert rust_map, "no Rust files parsed"
+            errors.append("parse_missing_prompt_or_completion")
+        else:
+            try:
+                c_map = self._parse_c_files(prompt)
+            except Exception:
+                errors.append("parse_missing_c")
+            rust_sig_map, sig_error = self._parse_rust_sig_files(prompt)
+            if sig_error:
+                errors.append(sig_error)
+            try:
+                rust_map = self._parse_completion_rust(completion)
+            except Exception:
+                errors.append("parse_missing_rust")
+
+        if errors:
+            return self._build_missing_pair(
+                idx=None,
+                c_path=None,
+                c_map=c_map,
+                rust_map=rust_map,
+                rust_sig_map=rust_sig_map,
+                errors=errors,
+            )
+
         return self._build_pairs(
             c_map, rust_map, rust_sig_map, sig_error, idx=None, c_path=None
         )
+
+    def _merge_code_map(self, code_map: Dict[str, str]) -> str:
+        """Merge code blocks in a stable order."""
+        if not code_map:
+            return ""
+        return "\n\n".join(code_map[name] for name in sorted(code_map)).strip()
+
+    def _build_missing_pair(
+        self,
+        idx: Optional[int],
+        c_path: Optional[str],
+        c_map: Dict[str, str],
+        rust_map: Dict[str, str],
+        rust_sig_map: Dict[str, str],
+        errors: List[str],
+    ) -> List[CodePair]:
+        """Build a single zero-score pair when any content is missing."""
+        c_files = sorted(c_map.keys())
+        c_code = self._merge_code_map(c_map)
+        rust_code = self._merge_code_map(rust_map)
+        rust_sig_code = self._merge_code_map(rust_sig_map)
+        if not rust_sig_code:
+            rust_sig_code = None
+        error = "|".join(errors)
+        return [
+            CodePair(
+                idx=idx,
+                c_path=c_path,
+                rust_file="__all__",
+                c_files=c_files,
+                c_code=c_code,
+                rust_code=rust_code,
+                rust_sig_code=rust_sig_code,
+                error=error,
+            )
+        ]
 
     def _parse_c_files(self, prompt: str) -> Dict[str, str]:
         """Extract C code blocks from the prompt section."""
@@ -276,34 +359,41 @@ class CRustSimilarity:
     ) -> List[CodePair]:
         """Build matched C/Rust pairs from parsed file maps."""
         pairs: List[CodePair] = []
-        if sig_error is None:
-            missing = [name for name in rust_map if name not in rust_sig_map]
-            if missing:
-                c_files = sorted(c_map.keys())
-                rust_files = sorted(rust_map.keys())
-                sig_files = sorted(rust_sig_map.keys())
-                c_code = "\n\n".join(c_map[name] for name in c_files).strip()
-                rust_code = "\n\n".join(rust_map[name] for name in rust_files).strip()
-                rust_sig_code = "\n\n".join(rust_sig_map[name] for name in sig_files).strip()
-                if not c_code:
-                    raise ValueError("empty merged C for fallback")
-                if not rust_code:
-                    raise ValueError("empty merged Rust for fallback")
-                if not rust_sig_code:
-                    rust_sig_code = None
-                pairs.append(
-                    CodePair(
-                        idx=idx,
-                        c_path=c_path,
-                        rust_file="__all__",
-                        c_files=c_files,
-                        c_code=c_code,
-                        rust_code=rust_code,
-                        rust_sig_code=rust_sig_code,
-                        error="sig_mismatch_fallback_all",
-                    )
+        def _has_c_base(filename: str) -> bool:
+            base = os.path.splitext(filename)[0]
+            return base + ".h" in c_map or base + ".c" in c_map
+
+        fallback_reasons: List[str] = []
+        missing_sig = [name for name in rust_map if name not in rust_sig_map]
+        if missing_sig:
+            fallback_reasons.append("fallback_all_sig_mismatch")
+        missing_c_for_rust = [name for name in rust_map if not _has_c_base(name)]
+        if missing_c_for_rust:
+            fallback_reasons.append("fallback_all_missing_c_for_rust")
+        sig_targets = [name for name in rust_map if name in rust_sig_map]
+        missing_c_for_sig = [name for name in sig_targets if not _has_c_base(name)]
+        if missing_c_for_sig:
+            fallback_reasons.append("fallback_all_missing_c_for_sig")
+        if fallback_reasons:
+            c_files = sorted(c_map.keys())
+            c_code = self._merge_code_map(c_map)
+            rust_code = self._merge_code_map(rust_map)
+            rust_sig_code = self._merge_code_map(rust_sig_map)
+            if not rust_sig_code:
+                rust_sig_code = None
+            pairs.append(
+                CodePair(
+                    idx=idx,
+                    c_path=c_path,
+                    rust_file="__all__",
+                    c_files=c_files,
+                    c_code=c_code,
+                    rust_code=rust_code,
+                    rust_sig_code=rust_sig_code,
+                    error="|".join(fallback_reasons),
                 )
-                return pairs
+            )
+            return pairs
 
         for rust_file, rust_code in rust_map.items():
             base = os.path.splitext(rust_file)[0]
@@ -317,11 +407,7 @@ class CRustSimilarity:
             if source in c_map:
                 c_files.append(source)
                 parts.append(c_map[source])
-            if not parts:
-                raise ValueError(f"missing C files for rust base {base}")
             merged = "\n\n".join(parts).strip()
-            if not merged:
-                raise ValueError(f"empty merged C for rust base {base}")
             rust_sig_code = rust_sig_map.get(rust_file) if sig_error is None else None
             if rust_sig_code:
                 rust_sig_code = rust_sig_code.strip()
@@ -357,13 +443,21 @@ class CRustSimilarity:
         results: List[tuple[float, float, float, Optional[str]]] = [
             (0.0, 0.0, 0.0, pair.error) for pair in pairs
         ]
-        idxs = [i for i, pair in enumerate(pairs) if pair.rust_sig_code]
-        idx_set = set(idxs)
+        idxs: List[int] = []
         for i, pair in enumerate(pairs):
-            if i in idx_set:
+            if not pair.c_code:
+                if results[i][3] is None:
+                    results[i] = (0.0, 0.0, 0.0, "missing_c_code")
                 continue
-            if results[i][3] is None:
-                results[i] = (0.0, 0.0, 0.0, "sig_missing")
+            if not pair.rust_code:
+                if results[i][3] is None:
+                    results[i] = (0.0, 0.0, 0.0, "missing_rust_code")
+                continue
+            if not pair.rust_sig_code:
+                if results[i][3] is None:
+                    results[i] = (0.0, 0.0, 0.0, "sig_missing")
+                continue
+            idxs.append(i)
         if not idxs:
             return results
 

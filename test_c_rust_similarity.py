@@ -83,6 +83,23 @@ def _sample_jsonl_line_sig_mismatch() -> str:
     return json.dumps(obj, ensure_ascii=True)
 
 
+def _sample_prompt_completion_missing_rust() -> tuple[str, str]:
+    prompt = (
+        "The C Source Files\n"
+        "{{foo.c}}\n"
+        "```c\n"
+        "int foo(void) { return 1; }\n"
+        "```\n"
+        "The Rust Interface Files\n"
+        "{{foo.rs}}\n"
+        "```rust\n"
+        "pub fn foo() -> i32 { unimplemented!() }\n"
+        "```\n"
+    )
+    completion = "<final_solution>\n</final_solution>\n"
+    return prompt, completion
+
+
 class CRustSimilarityTests(unittest.TestCase):
     def test_parse_jsonl_line(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -103,7 +120,8 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertEqual(len(pairs), 1)
         pair = pairs[0]
         self.assertEqual(pair.rust_file, "__all__")
-        self.assertEqual(pair.error, "sig_mismatch_fallback_all")
+        self.assertIn("fallback_all_sig_mismatch", pair.error)
+        self.assertIn("fallback_all_missing_c_for_rust", pair.error)
         self.assertTrue(pair.rust_sig_code)
 
     def test_process_file(self):
@@ -156,6 +174,16 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertAlmostEqual(result["cosine_similarity_sig"], 0.0, places=6)
         self.assertAlmostEqual(result["cosine_similarity(code-sig)"], 0.0, places=6)
         self.assertEqual(result["error"], "sig_missing")
+
+    def test_score_prompt_completion_missing_rust(self):
+        pipeline = CRustSimilarity(embedder=DummyEmbedder())
+        prompt, completion = _sample_prompt_completion_missing_rust()
+        results = pipeline.score_prompt_completion(prompt, completion)
+        self.assertEqual(len(results), 1)
+        self.assertAlmostEqual(results[0]["cosine_similarity_code"], 0.0, places=6)
+        self.assertAlmostEqual(results[0]["cosine_similarity_sig"], 0.0, places=6)
+        self.assertAlmostEqual(results[0]["cosine_similarity(code-sig)"], 0.0, places=6)
+        self.assertEqual(results[0]["error"], "parse_missing_rust")
 
 
 if __name__ == "__main__":
