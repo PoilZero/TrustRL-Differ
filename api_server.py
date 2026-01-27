@@ -133,7 +133,7 @@ class BatchScoringService:
         pc_results: Dict[int, List[Dict[str, Any]]] = {}
         if pc_pairs:
             scores = self.model._compute_scores(pc_pairs)
-            for pair, (code_sim, sig_sim, delta), item_idx in zip(
+            for pair, (code_sim, sig_sim, delta, error), item_idx in zip(
                 pc_pairs, scores, pc_pair_to_item
             ):
                 pc_results.setdefault(item_idx, []).append(
@@ -143,6 +143,7 @@ class BatchScoringService:
                         "cosine_similarity_code": code_sim,
                         "cosine_similarity_sig": sig_sim,
                         "cosine_similarity(code-sig)": delta,
+                        "error": error,
                     }
                 )
 
@@ -179,18 +180,20 @@ class BatchScoringService:
                     c_code=item.c_code,
                     rust_code=item.rust_code,
                     rust_sig_code=item.rust_sig_code.strip() if item.rust_sig_code else None,
+                    error=None,
                 )
             )
 
         if text_pairs:
             scores = self.model._compute_scores(text_pairs)
-            for item_idx, (code_sim, sig_sim, delta) in zip(text_items, scores):
+            for item_idx, (code_sim, sig_sim, delta, error) in zip(text_items, scores):
                 responses[item_idx] = {
                     "request_id": batch[item_idx].request_id,
                     "result": {
                         "cosine_similarity_code": code_sim,
                         "cosine_similarity_sig": sig_sim,
                         "cosine_similarity(code-sig)": delta,
+                        "error": error,
                     },
                     "error": None,
                 }

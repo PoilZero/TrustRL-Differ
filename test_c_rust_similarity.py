@@ -54,6 +54,35 @@ def _sample_jsonl_line() -> str:
     return json.dumps(obj, ensure_ascii=True)
 
 
+def _sample_jsonl_line_sig_mismatch() -> str:
+    prompt = (
+        "The C Source Files\n"
+        "{{foo.h}}\n"
+        "```c\n"
+        "int foo(void);\n"
+        "```\n"
+        "{{foo.c}}\n"
+        "```c\n"
+        "int foo(void) { return 1; }\n"
+        "```\n"
+        "The Rust Interface Files\n"
+        "{{sig.rs}}\n"
+        "```rust\n"
+        "pub fn sig() -> i32 { unimplemented!() }\n"
+        "```\n"
+    )
+    completion = (
+        "<final_solution>\n"
+        "{{impl.rs}}\n"
+        "```rust\n"
+        "pub fn impl_() -> i32 { 1 }\n"
+        "```\n"
+        "</final_solution>\n"
+    )
+    obj = {"idx": 2, "c_path": "path2", "prompt": prompt, "completion": completion}
+    return json.dumps(obj, ensure_ascii=True)
+
+
 class CRustSimilarityTests(unittest.TestCase):
     def test_parse_jsonl_line(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -66,6 +95,16 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertIn("int foo(void)", pair.c_code)
         self.assertIn("pub fn foo()", pair.rust_code)
         self.assertIn("pub fn foo()", pair.rust_sig_code or "")
+        self.assertIsNone(pair.error)
+
+    def test_parse_jsonl_line_sig_mismatch(self):
+        pipeline = CRustSimilarity(embedder=DummyEmbedder())
+        pairs = pipeline.parse_jsonl_line(_sample_jsonl_line_sig_mismatch())
+        self.assertEqual(len(pairs), 1)
+        pair = pairs[0]
+        self.assertEqual(pair.rust_file, "__all__")
+        self.assertEqual(pair.error, "sig_mismatch_fallback_all")
+        self.assertTrue(pair.rust_sig_code)
 
     def test_process_file(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -77,12 +116,15 @@ class CRustSimilarityTests(unittest.TestCase):
             report = pipeline.process_file(in_path, out_path, limit=1)
             self.assertEqual(report["pairs_written"], 1)
             with open(out_path, "r", encoding="utf-8") as f:
-                rec = json.loads(f.readline())
+                line = f.readline()
+                rec = json.loads(line)
             self.assertAlmostEqual(rec["cosine_similarity_code"], 1.0, places=6)
             self.assertAlmostEqual(rec["cosine_similarity_sig"], 1.0, places=6)
             self.assertAlmostEqual(rec["cosine_similarity(code-sig)"], 0.0, places=6)
             self.assertIn("elapsed_ms", rec)
             self.assertGreaterEqual(rec["elapsed_ms"], 0.0)
+            self.assertIn("error", rec)
+            self.assertTrue(line.startswith('{"cosine_similarity_code":'))
 
     def test_score_prompt_completion(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -93,6 +135,7 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertAlmostEqual(results[0]["cosine_similarity_code"], 1.0, places=6)
         self.assertAlmostEqual(results[0]["cosine_similarity_sig"], 1.0, places=6)
         self.assertAlmostEqual(results[0]["cosine_similarity(code-sig)"], 0.0, places=6)
+        self.assertIsNone(results[0]["error"])
 
     def test_score_texts(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -104,6 +147,7 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertAlmostEqual(result["cosine_similarity_code"], 1.0, places=6)
         self.assertAlmostEqual(result["cosine_similarity_sig"], 1.0, places=6)
         self.assertAlmostEqual(result["cosine_similarity(code-sig)"], 0.0, places=6)
+        self.assertIsNone(result["error"])
 
     def test_score_texts_missing_sig(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())
@@ -111,6 +155,7 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertAlmostEqual(result["cosine_similarity_code"], 0.0, places=6)
         self.assertAlmostEqual(result["cosine_similarity_sig"], 0.0, places=6)
         self.assertAlmostEqual(result["cosine_similarity(code-sig)"], 0.0, places=6)
+        self.assertEqual(result["error"], "sig_missing")
 
 
 if __name__ == "__main__":
