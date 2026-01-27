@@ -16,6 +16,23 @@ class DummyEmbedder:
         return self.torch.tensor([[1.0, 0.0]] * len(texts), dtype=self.torch.float32)
 
 
+class DeltaNegativeEmbedder:
+    def __init__(self) -> None:
+        import torch
+
+        self.torch = torch
+        self.batch_size = 4
+        self._call = 0
+
+    def encode(self, texts):
+        self._call += 1
+        if self._call == 1:
+            return self.torch.tensor([[1.0, 0.0]] * len(texts), dtype=self.torch.float32)
+        if self._call == 2:
+            return self.torch.tensor([[0.6, 0.8]] * len(texts), dtype=self.torch.float32)
+        return self.torch.tensor([[0.9, 0.435]] * len(texts), dtype=self.torch.float32)
+
+
 def _sample_jsonl_line() -> str:
     prompt = (
         "The C Source Files\n"
@@ -184,6 +201,18 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertAlmostEqual(results[0]["cosine_similarity_sig"], 0.0, places=6)
         self.assertAlmostEqual(results[0]["cosine_similarity(code-sig)"], 0.0, places=6)
         self.assertEqual(results[0]["error"], "parse_missing_rust")
+
+    def test_delta_negative_keeps_code_sig(self):
+        pipeline = CRustSimilarity(embedder=DeltaNegativeEmbedder())
+        result = pipeline.score_texts(
+            "int foo(void) { return 1; }",
+            "pub fn foo() -> i32 { 1 }",
+            "pub fn foo() -> i32;",
+        )
+        self.assertAlmostEqual(result["cosine_similarity_code"], 0.6, places=6)
+        self.assertAlmostEqual(result["cosine_similarity_sig"], 0.9, places=6)
+        self.assertAlmostEqual(result["cosine_similarity(code-sig)"], 0.0, places=6)
+        self.assertEqual(result["error"], "delta_negative")
 
 
 if __name__ == "__main__":

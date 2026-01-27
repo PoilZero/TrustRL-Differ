@@ -480,7 +480,7 @@ class CRustSimilarity:
                     error = f"{error}|delta_negative"
                 else:
                     error = "delta_negative"
-                results[idx] = (0.0, 0.0, 0.0, error)
+                results[idx] = (code_sim, sig_sim, 0.0, error)
             else:
                 results[idx] = (code_sim, sig_sim, delta, error)
         return results
