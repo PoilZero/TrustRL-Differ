@@ -81,6 +81,8 @@ class CRustSimilarityTests(unittest.TestCase):
             self.assertAlmostEqual(rec["cosine_similarity_code"], 1.0, places=6)
             self.assertAlmostEqual(rec["cosine_similarity_sig"], 1.0, places=6)
             self.assertAlmostEqual(rec["cosine_similarity(code-sig)"], 0.0, places=6)
+            self.assertIn("elapsed_ms", rec)
+            self.assertGreaterEqual(rec["elapsed_ms"], 0.0)
 
     def test_score_prompt_completion(self):
         pipeline = CRustSimilarity(embedder=DummyEmbedder())

@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 
@@ -52,7 +53,7 @@ def _last_token_pool(last_hidden_states, attention_mask):
 
 
 class QwenEmbedder:
-    """Embed texts with Qwen3-Embedding-0.6B using Transformers on GPU."""
+    """Embed texts with Qwen3-Embedding models using Transformers on GPU."""
     def __init__(
         self,
         model_path: str,
@@ -71,12 +72,20 @@ class QwenEmbedder:
             if not device.startswith("cuda") or not torch.cuda.is_available():
                 raise RuntimeError("GPU is required but not available")
 
+        if device.startswith("cuda") and torch.cuda.is_available():
+            if torch.cuda.is_bf16_supported():
+                model_dtype = torch.bfloat16
+            else:
+                model_dtype = torch.float16
+        else:
+            model_dtype = torch.float32
+
         self.torch = torch
         self.device = device
         self.max_length = max_length
         self.batch_size = batch_size
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side="left")
-        self.model = AutoModel.from_pretrained(model_path)
+        self.model = AutoModel.from_pretrained(model_path, torch_dtype=model_dtype)
         self.model.to(device)
         self.model.eval()
 
@@ -171,7 +180,7 @@ class CRustSimilarity:
     """Parse JSONL inputs, build C/Rust pairs, embed, and write similarity results."""
     def __init__(
         self,
-        model_path: str = "Qwen3-Embedding-0.6B",
+        model_path: str = "Qwen3-Embedding-4B",
         device: str = "cuda",
         max_length: int = 32768,
         batch_size: int = 4,
@@ -406,7 +415,10 @@ class CRustSimilarity:
         """Embed and write a batch of pairs, updating stats."""
         if not pairs:
             return 0
+        start = time.perf_counter()
         scores = self._compute_scores(pairs)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        per_pair_ms = elapsed_ms / len(pairs)
         for pair, (code_sim, sig_sim, delta) in zip(pairs, scores):
             record = {
                 "idx": pair.idx,
@@ -418,6 +430,7 @@ class CRustSimilarity:
                 "cosine_similarity_code": code_sim,
                 "cosine_similarity_sig": sig_sim,
                 "cosine_similarity(code-sig)": delta,
+                "elapsed_ms": per_pair_ms,
             }
             json.dump(record, out, ensure_ascii=True)
             out.write("\n")
@@ -448,7 +461,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Compute C/Rust similarity from train_outputs JSONL.")
     parser.add_argument("--input", default="train_outputs_0.jsonl", help="Input JSONL path")
     parser.add_argument("--output", required=True, help="Output JSONL path")
-    parser.add_argument("--model-path", default="Qwen3-Embedding-0.6B", help="Local model path")
+    parser.add_argument("--model-path", default="Qwen3-Embedding-4B", help="Local model path")
     parser.add_argument("--device", default="cuda", help="Device, default cuda")
     parser.add_argument("--limit", type=int, help="Process only first N lines")
     parser.add_argument("--batch-size", type=int, default=4, help="Embedding batch size")

@@ -303,7 +303,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the similarity API service.")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host")
     parser.add_argument("--port", type=int, default=7010, help="Bind port")
-    parser.add_argument("--model-path", default="../Qwen3-Embedding-0.6B", help="Model path")
+    parser.add_argument("--model-path", default="../Qwen3-Embedding-4B", help="Model path")
     parser.add_argument("--device", default="cuda", help="Device for inference")
     parser.add_argument("--max-length", type=int, default=32768, help="Tokenizer max length")
     parser.add_argument("--max-batch-size", type=int, default=8, help="Max batch size")
