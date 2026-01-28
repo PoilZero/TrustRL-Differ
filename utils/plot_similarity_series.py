@@ -30,8 +30,6 @@ def load_series(path: Path):
             code_val = float(obj.get("cosine_similarity_code", 0.0))
             sig_val = float(obj.get("cosine_similarity_sig", 0.0))
             gap_val = code_val - sig_val
-            if gap_val < 0:
-                gap_val = 0.0
             series["cosine_similarity_code"].append(code_val)
             series["cosine_similarity_sig"].append(sig_val)
             series["cosine_similarity(code-sig)"].append(gap_val)
