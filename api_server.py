@@ -2,6 +2,7 @@
 """HTTP API for prompt/completion and text similarity scoring."""
 import argparse
 import asyncio
+import copy
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -302,6 +303,26 @@ def create_app(service: BatchScoringService) -> FastAPI:
     return app
 
 
+def build_uvicorn_log_config() -> Dict[str, Any]:
+    from uvicorn.config import LOGGING_CONFIG
+
+    log_config = copy.deepcopy(LOGGING_CONFIG)
+    formatters = log_config.get("formatters", {})
+    default_formatter = formatters.get("default")
+    access_formatter = formatters.get("access")
+
+    timestamp_pattern = "%Y-%m-%d %H:%M:%S"
+    if isinstance(default_formatter, dict):
+        default_formatter["fmt"] = "%(asctime)s %(levelprefix)s %(message)s"
+        default_formatter["datefmt"] = timestamp_pattern
+    if isinstance(access_formatter, dict):
+        access_formatter["fmt"] = (
+            '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+        )
+        access_formatter["datefmt"] = timestamp_pattern
+    return log_config
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the similarity API service.")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host")
@@ -328,7 +349,12 @@ def main() -> int:
 
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_config=build_uvicorn_log_config(),
+    )
     return 0
 
 
