@@ -202,7 +202,7 @@ class CRustSimilarityTests(unittest.TestCase):
         self.assertAlmostEqual(results[0]["cosine_similarity(code-sig)"], 0.0, places=6)
         self.assertEqual(results[0]["error"], "parse_missing_rust")
 
-    def test_delta_negative_keeps_code_sig(self):
+    def test_delta_negative_is_preserved(self):
         pipeline = CRustSimilarity(embedder=DeltaNegativeEmbedder())
         result = pipeline.score_texts(
             "int foo(void) { return 1; }",
@@ -211,8 +211,8 @@ class CRustSimilarityTests(unittest.TestCase):
         )
         self.assertAlmostEqual(result["cosine_similarity_code"], 0.6, places=6)
         self.assertAlmostEqual(result["cosine_similarity_sig"], 0.9, places=6)
-        self.assertAlmostEqual(result["cosine_similarity(code-sig)"], 0.0, places=6)
-        self.assertEqual(result["error"], "delta_negative")
+        self.assertAlmostEqual(result["cosine_similarity(code-sig)"], -0.3, places=6)
+        self.assertIsNone(result["error"])
 
 
 if __name__ == "__main__":

@@ -437,7 +437,7 @@ class CRustSimilarity:
     def _compute_scores(
         self, pairs: List[CodePair]
     ) -> List[tuple[float, float, float, Optional[str]]]:
-        """Compute code/sig/delta cosine scores with missing/negative handling."""
+        """Compute code/sig/delta cosine scores with missing-input handling."""
         if not pairs:
             return []
         results: List[tuple[float, float, float, Optional[str]]] = [
@@ -474,15 +474,7 @@ class CRustSimilarity:
             code_sim = float(code_sim)
             sig_sim = float(sig_sim)
             delta = code_sim - sig_sim
-            error = pairs[idx].error
-            if delta < 0:
-                if error:
-                    error = f"{error}|delta_negative"
-                else:
-                    error = "delta_negative"
-                results[idx] = (code_sim, sig_sim, 0.0, error)
-            else:
-                results[idx] = (code_sim, sig_sim, delta, error)
+            results[idx] = (code_sim, sig_sim, delta, pairs[idx].error)
         return results
 
     def score_prompt_completion(self, prompt: str, completion: str) -> List[Dict[str, object]]:
